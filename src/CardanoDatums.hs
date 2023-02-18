@@ -20,14 +20,19 @@ module CardanoDatums
   BeaconRedeemer(..),
   datumHashAsToken,
 
+  -- genDatumHash,
   readDatumHash,
 
   beaconPolicy,
   beaconScript,
   beaconSymbol,
 
+  spendValidator,
+  spendValidatorScript,
+  spendValidatorHash,
+
   writeScript,
-  writeData
+  writeData,
 ) where
 
 import Data.Aeson hiding (Value)
@@ -38,7 +43,7 @@ import Prelude (IO,FilePath)
 import qualified Prelude as Haskell
 import Data.String (fromString)
 
-import           Cardano.Api hiding (Script,Value,TxOut)
+import           Cardano.Api hiding (Address,Script,Value,TxOut)
 import           Cardano.Api.Shelley   (PlutusScript (..))
 import Plutus.V2.Ledger.Contexts
 import Plutus.V2.Ledger.Api
@@ -55,6 +60,9 @@ import PlutusPrelude (foldl')
 -------------------------------------------------
 -- Off-Chain Helper Functions
 -------------------------------------------------
+-- genDatumHash :: ToData a => a -> DatumHash
+-- genDatumHash = datumHash . Datum . toBuiltinData
+
 -- | Parse DatumHash from user supplied String
 readDatumHash :: Haskell.String -> Either Haskell.String DatumHash
 readDatumHash s = case fromHex $ fromString s of
@@ -68,6 +76,24 @@ readDatumHash s = case fromHex $ fromString s of
 datumHashAsToken :: DatumHash -> TokenName
 datumHashAsToken (DatumHash hash) = TokenName hash
 
+{-# INLINABLE ownInput #-}
+ownInput :: ScriptContext -> TxOut
+ownInput (ScriptContext info (Spending ref)) = getScriptInput (txInfoInputs info) ref
+ownInput _ = traceError "script input error"
+
+{-# INLINABLE getScriptInput #-}
+getScriptInput :: [TxInInfo] -> TxOutRef -> TxOut
+getScriptInput [] _ = traceError "script input error"
+getScriptInput ((TxInInfo iRef ot) : tl) ref
+  | iRef == ref = ot
+  | otherwise = getScriptInput tl ref
+
+signed :: [PubKeyHash] -> PubKeyHash -> Bool
+signed [] _ = False
+signed (k:ks) k'
+  | k == k' = True
+  | otherwise = signed ks k'
+
 -------------------------------------------------
 -- Datum Beacon Settings
 -------------------------------------------------
@@ -77,11 +103,14 @@ data BeaconRedeemer
 
 PlutusTx.unstableMakeIsData ''BeaconRedeemer
 
+-- | This is useful for testing without risk of accidentally locking production beacons on chain.
+type AppName = BuiltinString
+
 -------------------------------------------------
 -- On-Chain Datum Beacon
 -------------------------------------------------
-mkBeaconPolicy :: BeaconRedeemer -> ScriptContext -> Bool
-mkBeaconPolicy r ctx@ScriptContext{scriptContextTxInfo = info} = case r of
+mkBeaconPolicy :: AppName -> BeaconRedeemer -> ScriptContext -> Bool
+mkBeaconPolicy appName r ctx@ScriptContext{scriptContextTxInfo = info} = case r of
     MintBeacon dtmHash ->
       -- | Must mint one beacon with correct token name.
       mintCheck &&
@@ -104,15 +133,20 @@ mkBeaconPolicy r ctx@ScriptContext{scriptContextTxInfo = info} = case r of
     mintCheck = case (r,beaconsMinted) of
       (MintBeacon dtmHash, [(_,tn,n)]) ->
         let name = datumHashAsToken dtmHash
-        in traceIfFalse "Only the beacon with an empty token name can be minted" (tn == name) &&
+        in traceIfFalse "The beacon token name is not the datum's hash" (tn == name) &&
            traceIfFalse "One, and only one, beacon must be minted with this redeemer." (n == 1)
       (MintBeacon _, _) -> traceError "Can only mint beacon with datum hash as token name"
       (BurnBeacon, xs) ->
         traceIfFalse "Beacons can only be burned with this redeemer" (all (\(_,_,n) -> n < 0) xs)
 
     matchingDatum :: OutputDatum -> Datum -> Bool
-    matchingDatum (OutputDatum d) dtm = d == dtm
-    matchingDatum _ _ = traceError "Beacon must be stored with the inline datum for the datum hash"
+    matchingDatum (OutputDatum d) dtm
+      | d == dtm = True
+      | otherwise = traceError "Beacon stored with different datum."
+    matchingDatum _ _ = traceError 
+                      $ "The " 
+                     <> appName 
+                     <> " beacon must be stored with the inline datum for the datum hash"
     
     -- | Check if the beacon is minted to the utxo containing the associated inline datum.
     destinationCheck :: DatumHash -> Bool
@@ -130,17 +164,64 @@ mkBeaconPolicy r ctx@ScriptContext{scriptContextTxInfo = info} = case r of
             else acc
       in foldl' foo True outputs
 
-beaconPolicy :: MintingPolicy
-beaconPolicy = Plutonomy.optimizeUPLC $ mkMintingPolicyScript
-   $$(PlutusTx.compile [|| wrap ||])
+beaconPolicy' :: AppName -> MintingPolicy
+beaconPolicy' appName = Plutonomy.optimizeUPLC $ mkMintingPolicyScript
+   ($$(PlutusTx.compile [|| wrap ||])
+     `PlutusTx.applyCode` PlutusTx.liftCode appName)
   where
-    wrap = mkUntypedMintingPolicy mkBeaconPolicy
+    wrap = mkUntypedMintingPolicy . mkBeaconPolicy
+
+beaconPolicy :: MintingPolicy
+beaconPolicy = beaconPolicy' "testing"
 
 beaconScript :: Script
 beaconScript = unMintingPolicyScript beaconPolicy
 
 beaconSymbol :: CurrencySymbol
 beaconSymbol = scriptCurrencySymbol beaconPolicy
+
+-------------------------------------------------
+-- On-Chain Spending Script
+-------------------------------------------------
+-- | This is a helper script to get the datum to appear inside a tx.
+mkSpendingScript :: BuiltinData -> () -> ScriptContext -> Bool
+mkSpendingScript _ () ctx@ScriptContext{scriptContextTxInfo = info} = stakingCredApproves
+  where
+    inputCredentials :: Address
+    inputCredentials = 
+      let TxOut{txOutAddress=addr} = ownInput ctx
+      in addr
+
+    stakingCredApproves :: Bool
+    stakingCredApproves = case addressStakingCredential inputCredentials of
+      -- | This is to prevent permanent locking of funds.
+      -- The DEX is not meant to be used without a staking credential.
+      Nothing -> True
+
+      -- | Check if staking credential signals approval.
+      Just stakeCred@(StakingHash cred) -> case cred of
+        PubKeyCredential pkh -> signed (txInfoSignatories info) pkh
+        ScriptCredential _ -> isJust $ Map.lookup stakeCred $ txInfoWdrl info
+      
+      Just _ -> traceError "Wrong kind of staking credential."
+
+data Spend
+instance ValidatorTypes Spend where
+  type instance RedeemerType Spend = ()
+  type instance DatumType Spend = BuiltinData
+
+spendValidator :: Validator
+spendValidator = Plutonomy.optimizeUPLC $ validatorScript $ mkTypedValidator @Spend
+    ($$(PlutusTx.compile [|| mkSpendingScript ||]))
+    $$(PlutusTx.compile [|| wrap ||])
+  where
+    wrap = mkUntypedValidator
+
+spendValidatorScript :: Script
+spendValidatorScript = unValidatorScript spendValidator
+
+spendValidatorHash :: ValidatorHash
+spendValidatorHash = Scripts.validatorHash spendValidator
 
 -------------------------------------------------
 -- Serialization
