@@ -397,6 +397,39 @@ mintBeaconsForMultipleDatums = do
       , asInline = True
       }
 
+properMint2 :: EmulatorTrace ()
+properMint2 = do
+  h1 <- activateContractWallet (knownWallet 1) endpoints
+
+  let initialDtm = toDatum (10 :: Integer)
+      dtmInName = toDatum (10 :: Integer)
+      outputDtm = toDatum (10 :: Integer)
+      userKey = unPaymentPubKeyHash $ mockWalletPaymentPubKeyHash $ knownWallet 1
+      datumAddr = Address (ScriptCredential spendValidatorHash) Nothing
+      mintAddr = Address (PubKeyCredential userKey) Nothing
+
+  callEndpoint @"initialize" h1 $
+    InitializeParams
+      { initializeAddress = datumAddr
+      , initializeUtxo = (initialDtm, lovelaceValueOf 10_000_000)
+      }
+
+  void $ waitUntilSlot 2
+
+  callEndpoint @"mint-beacons" h1 $
+    MintBeaconsParams
+      { beaconsMinted = [(datumTokenName dtmInName,1)]
+      , useMintRedeemer = True
+      , beaconOutput = 
+          ( Just outputDtm
+          , lovelaceValueOf 2_000_000 <> singleton beaconSymbol (datumTokenName dtmInName) 1
+          )
+      , addressWithDatum = datumAddr
+      , datumInputUtxo = (initialDtm, lovelaceValueOf 10_000_000)
+      , mintToAddress = mintAddr
+      , asInline = True
+      }
+
 -------------------------------------------------
 -- Test Functions
 -------------------------------------------------
@@ -417,7 +450,9 @@ tests = do
         (Test.not assertNoFailedTransactions) mintBeaconsForMultipleDatums
     , checkPredicate "Successfully mint beacon"
         assertNoFailedTransactions properMint
+    , checkPredicate "Successfully mint beacon for an entirely different datum"
+        assertNoFailedTransactions properMint2
     ]
 
 testTrace :: IO ()
-testTrace = runEmulatorTraceIO properMint
+testTrace = runEmulatorTraceIO properMint2
