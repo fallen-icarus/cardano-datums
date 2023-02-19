@@ -202,8 +202,11 @@ mkSpendingScript _ _ ctx@ScriptContext{scriptContextTxInfo = info} = stakingCred
 
       -- | Check if staking credential signals approval.
       Just stakeCred@(StakingHash cred) -> case cred of
-        PubKeyCredential pkh -> signed (txInfoSignatories info) pkh
-        ScriptCredential _ -> isJust $ Map.lookup stakeCred $ txInfoWdrl info
+        PubKeyCredential pkh -> 
+          traceIfFalse "Stake key didn't sign" (signed (txInfoSignatories info) pkh)
+        ScriptCredential _ -> 
+          traceIfFalse "Stake script not executed"
+            (isJust $ Map.lookup stakeCred $ txInfoWdrl info)
       
       Just _ -> traceError "Wrong kind of staking credential."
 
