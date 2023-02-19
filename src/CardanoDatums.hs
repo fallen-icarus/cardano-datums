@@ -18,9 +18,11 @@
 module CardanoDatums
 (
   BeaconRedeemer(..),
+  CurrencySymbol(..),
+  TokenName(..),
+  DatumHash(..),
   datumHashAsToken,
 
-  -- genDatumHash,
   readDatumHash,
 
   beaconPolicy,
@@ -60,9 +62,6 @@ import PlutusPrelude (foldl')
 -------------------------------------------------
 -- Off-Chain Helper Functions
 -------------------------------------------------
--- genDatumHash :: ToData a => a -> DatumHash
--- genDatumHash = datumHash . Datum . toBuiltinData
-
 -- | Parse DatumHash from user supplied String
 readDatumHash :: Haskell.String -> Either Haskell.String DatumHash
 readDatumHash s = case fromHex $ fromString s of

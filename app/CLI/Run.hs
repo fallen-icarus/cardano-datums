@@ -3,18 +3,28 @@ module CLI.Run
   runCommand
 ) where
 
--- import Data.Aeson
--- import Data.Aeson.Encode.Pretty
--- import qualified Data.ByteString.Lazy as BL
+import Data.Aeson
+import Data.Aeson.Encode.Pretty
+import qualified Data.ByteString.Lazy as BL
 
 import CardanoDatums
 import CLI.Types
+import CLI.QueryDatum
 
 runCommand :: Command -> IO ()
 runCommand cmd = case cmd of
   ExportBeaconPolicy file -> exportPolicy file
   CreateBeaconRedeemer r file -> createRedeemer r file
   ExportHelperScript file -> exportHelperScript file
+  QueryDatum dtmHash network output -> runQueryDatum dtmHash network output
+
+runQueryDatum :: DatumHash -> Network -> Output -> IO ()
+runQueryDatum dtmHash network output = do
+  let beaconId = (beaconSymbol, datumHashAsToken dtmHash)
+  res <- runQuery beaconId network
+  case output of
+    Stdout -> BL.putStr $ encode res
+    File file -> BL.writeFile file $ encodePretty res
 
 createRedeemer :: BeaconRedeemer -> FilePath -> IO ()
 createRedeemer r file = do

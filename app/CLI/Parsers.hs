@@ -19,7 +19,50 @@ parseCommand = hsubparser $ mconcat
       (info pCreateBeaconRedeemer $ progDesc "Create the redeemer for the datum beacon policy.")
   , command "export-helper-script"
       (info pExportHelperScript $ progDesc "Export the helper script.")
+  , command "query"
+      (info parseQueryDatum $ progDesc "Query the chain for a datum.")
   ]
+
+-------------------------------------------------
+-- Query Parsers
+-------------------------------------------------
+parseQueryDatum :: Parser Command
+parseQueryDatum = 
+    QueryDatum
+      <$> pDatumHash
+      <*> pNetwork
+      <*> pOutput
+  where
+    pDatumHash :: Parser DatumHash
+    pDatumHash = option (eitherReader readDatumHash)
+      (  long "datum-hash" 
+      <> metavar "STRING" 
+      <> help "Datum hash to lookup."
+      )
+
+    pNetwork :: Parser Network
+    pNetwork = pMainnet <|> pPreProdTestnet
+      where
+        pMainnet :: Parser Network
+        pMainnet = Mainnet <$> strOption
+          (  long "mainnet"
+          <> metavar "STRING"
+          <> help "Query the mainnet using the Blockfrost Api with the supplied api key.")
+        
+        pPreProdTestnet :: Parser Network
+        pPreProdTestnet = PreProdTestnet <$> strOption
+          (  long "preprod-testnet"
+          <> metavar "STRING"
+          <> help "Query the preproduction testnet using the Blockfrost Api with the supplied api key.")
+
+    pOutput :: Parser Output
+    pOutput = pStdOut <|> File <$> pOutputFile
+      where
+        pStdOut :: Parser Output
+        pStdOut = flag' Stdout
+          (  long "stdout"
+          <> help "Display to stdout."
+          )
 
 -------------------------------------------------
 -- Beacon Parsers

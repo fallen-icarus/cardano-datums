@@ -71,7 +71,9 @@ executable cardano-datums
     other-modules:
       CLI.Types,
       CLI.Parsers,
-      CLI.Run
+      CLI.Run,
+      CLI.BlockfrostApi,
+      CLI.QueryDatum
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
