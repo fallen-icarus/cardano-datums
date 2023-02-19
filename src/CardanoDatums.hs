@@ -184,8 +184,10 @@ beaconSymbol = scriptCurrencySymbol beaconPolicy
 -- On-Chain Spending Script
 -------------------------------------------------
 -- | This is a helper script to get the datum to appear inside a tx.
-mkSpendingScript :: BuiltinData -> () -> ScriptContext -> Bool
-mkSpendingScript _ () ctx@ScriptContext{scriptContextTxInfo = info} = stakingCredApproves
+-- This script can be used with any datum and redeemer.
+-- For convenience, it is recommended to use the datum as the redeemer.
+mkSpendingScript :: BuiltinData -> BuiltinData -> ScriptContext -> Bool
+mkSpendingScript _ _ ctx@ScriptContext{scriptContextTxInfo = info} = stakingCredApproves
   where
     inputCredentials :: Address
     inputCredentials = 
@@ -207,7 +209,7 @@ mkSpendingScript _ () ctx@ScriptContext{scriptContextTxInfo = info} = stakingCre
 
 data Spend
 instance ValidatorTypes Spend where
-  type instance RedeemerType Spend = ()
+  type instance RedeemerType Spend = BuiltinData
   type instance DatumType Spend = BuiltinData
 
 spendValidator :: Validator
