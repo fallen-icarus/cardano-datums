@@ -1,3 +1,6 @@
 dist-newstyle/
 assets/
 TODO
+*.addr
+*.plutus
+*.json
