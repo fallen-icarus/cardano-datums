@@ -14,11 +14,11 @@ datumHash=$(cardano-cli transaction hash-script-data \
   --script-data-file $datumFile)
 
 # Export the beacon policy
-cardano-datums -- export-policy \
+cardano-datums export-policy \
   --out-file $beaconPolicyFile
 
 # Create the beacon redeemer
-cardano-datums -- redeemer \
+cardano-datums redeemer \
   --mint-beacon $datumHash \
   --out-file $beaconRedeemerFile
 
